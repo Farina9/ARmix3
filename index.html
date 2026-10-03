@@ -51,6 +51,66 @@
       }
     });
 
+    // کنترلر انیمیشن سبک و مطمئن برای A-Frame 1.5.0 + MindAR 1.2.5
+    // اگر aframe-extras بارگذاری نشده باشد، یک animation-mixer داخلی جایگزین می‌شود؛
+    // در هر حالت پخش/توقف دقیق با targetFound/targetLost مدیریت می‌شود.
+    (function () {
+      function registerFallbackMixer() {
+        if (AFRAME.components["animation-mixer"]) return; // نسخه extras موجود است
+        console.warn("aframe-extras animation-mixer not found — using built-in fallback mixer");
+        AFRAME.registerComponent("animation-mixer", {
+          schema: { clip: { default: "*" }, loop: { default: "repeat" }, timeScale: { default: 1 }, crossFadeDuration: { default: 0.3 } },
+          init: function () { this.mixer = null; this.actions = {}; this.applied = false; },
+          update: function () {
+            const el = this.el;
+            el.addEventListener("model-loaded", () => this.build(), { once: true });
+            if (el.getObject3D("mesh")) this.build();
+          },
+          build: function () {
+            const mesh = this.el.getObject3D("mesh");
+            if (!mesh) return;
+            const clips = mesh.animations || (mesh.children && mesh.children[0] && mesh.children[0].animations) || [];
+            if (!clips.length) return;
+            this.mixer = new THREE.AnimationMixer(mesh);
+            const wanted = this.data.clip === "*" ? clips.map(c => c.name) : [this.data.clip];
+            wanted.forEach(name => {
+              const clip = THREE.AnimationClip.findByName(clips, name);
+              if (!clip) return;
+              const action = this.mixer.clipAction(clip);
+              action.setLoop(this.data.loop === "once" ? THREE.LoopOnce : THREE.LoopRepeat, Infinity);
+              action.clampWhenFinished = false;
+              action.timeScale = this.data.timeScale;
+              action.play();
+              this.actions[name] = action;
+            });
+          },
+          tick: function (t, dt) { if (this.mixer) this.mixer.update(dt / 1000); },
+          remove: function () { if (this.mixer) this.mixer.stopAllAction(); }
+        });
+      }
+      registerFallbackMixer();
+
+      // پخش/توقف انیمیشن بر اساس وضعیت تارگت MindAR (با fallback داخلی)
+      AFRAME.registerComponent("anim-playback", {
+        schema: { autoplay: { default: true }, speed: { default: 1 } },
+        init: function () {
+          const el = this.el;
+          const target = el.closest("[mindar-image-target]");
+          if (!target) return;
+          const setScale = (v) => {
+            if (el.components["animation-mixer"]) {
+              el.setAttribute("animation-mixer", "timeScale", v);
+            }
+            const mixer = el.components["animation-mixer"] && el.components["animation-mixer"].mixer;
+            if (mixer) mixer.timeScale = v;
+          };
+          target.addEventListener("targetFound", () => { if (this.data.autoplay) setScale(this.data.speed); });
+          target.addEventListener("targetLost", () => setScale(0));
+          if (!this.data.autoplay) setScale(0);
+        }
+      });
+    })();
+
     // مدیریت دقیق مدیا: قطع کامل صدا تا زمان پیدا شدن قطعی تارگت
     AFRAME.registerComponent("media-controller", {
       schema: {
@@ -94,13 +154,11 @@
           mediaEl.currentTime = 0;
         }
 
-        // تنها و تنها با پیدا شدن تارگت پخش شروع می‌شود
         targetEntity.addEventListener("targetFound", () => {
           if (mediaEl) {
             const p = mediaEl.play();
             if (p !== undefined) {
               p.catch(() => {
-                // در صورت نیاز به مجوز مرورگر، با لمس فعال می‌شود
                 const unlock = () => { mediaEl.play(); window.removeEventListener("touchstart", unlock); window.removeEventListener("click", unlock); };
                 window.addEventListener("touchstart", unlock, { once: true });
                 window.addEventListener("click", unlock, { once: true });
@@ -109,11 +167,8 @@
           }
         });
 
-        // به محض گم شدن تارگت، پخش و صدا بلافاصله متوقف می‌شوند
         targetEntity.addEventListener("targetLost", () => {
-          if (mediaEl) {
-            mediaEl.pause();
-          }
+          if (mediaEl) mediaEl.pause();
         });
       }
     });
@@ -126,7 +181,7 @@
     <a-entity mindar-image-target="targetIndex: 0">
       
       <a-entity position="0 0 0.1" rotation="0 0 0" scale="0.5 0.5 0.5" auto-turn="speed: 40" touch-turn>
-        <a-gltf-model src="models/phoenix_bird.glb" animation-mixer="clip: *; loop: repeat; timeScale: 1"></a-gltf-model>
+        <a-gltf-model src="models/model1.glb" animation-mixer="clip: *; loop: repeat; timeScale: 1; crossFadeDuration: 0.3" anim-playback="autoplay: true; speed: 1"></a-gltf-model>
       </a-entity>
     </a-entity>
 

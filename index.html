@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AR Experience</title>
+  <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/aframe-extras@7.2.0/dist/aframe-extras.min.js"></script>
+  <style>
+    .a-enter-vr, .a-enter-ar, .a-orientation-modal, .a-modal, #a-scene-container { display: none !important; visibility: hidden !important; }
+    body { margin: 0; padding: 0; overflow: hidden; }
+  </style>
+  <script>
+    AFRAME.registerComponent("auto-turn", {
+      schema: { speed: { default: 40 } },
+      tick: function (t, dt) {
+        if (!dt) return;
+        const rot = this.el.getAttribute("rotation");
+        this.el.setAttribute("rotation", {
+          x: rot.x,
+          y: rot.y + (this.data.speed * dt) / 1000,
+          z: rot.z
+        });
+      }
+    });
+
+    AFRAME.registerComponent("touch-turn", {
+      init: function () {
+        let isDown = false, lastX = 0, lastY = 0;
+        const onStart = (cx, cy) => { isDown = true; lastX = cx; lastY = cy; };
+        const onMove = (cx, cy) => {
+          if (!isDown) return;
+          const dx = cx - lastX, dy = cy - lastY;
+          const rot = this.el.getAttribute("rotation");
+          this.el.setAttribute("rotation", {
+            x: rot.x - dy * 0.35,
+            y: rot.y + dx * 0.35,
+            z: rot.z
+          });
+          lastX = cx; lastY = cy;
+        };
+        const onEnd = () => { isDown = false; };
+
+        window.addEventListener("touchstart", (e) => { if (e.touches.length === 1) onStart(e.touches[0].clientX, e.touches[0].clientY); }, { passive: true });
+        window.addEventListener("touchmove", (e) => { if (e.touches.length === 1) onMove(e.touches[0].clientX, e.touches[0].clientY); }, { passive: true });
+        window.addEventListener("touchend", onEnd);
+
+        window.addEventListener("mousedown", (e) => onStart(e.clientX, e.clientY));
+        window.addEventListener("mousemove", (e) => onMove(e.clientX, e.clientY));
+        window.addEventListener("mouseup", onEnd);
+      }
+    });
+
+    // مدیریت دقیق مدیا: قطع کامل صدا تا زمان پیدا شدن قطعی تارگت
+    AFRAME.registerComponent("media-controller", {
+      schema: {
+        type: { default: "video" },
+        src: { default: "" },
+        loop: { default: true }
+      },
+      init: function () {
+        const el = this.el;
+        const targetEntity = el.closest("[mindar-image-target]");
+        if (!targetEntity) return;
+
+        let mediaEl = null;
+
+        if (this.data.type === "video") {
+          mediaEl = document.createElement("video");
+          mediaEl.src = this.data.src;
+          mediaEl.crossOrigin = "anonymous";
+          mediaEl.loop = (this.data.loop === true || this.data.loop === "true");
+          mediaEl.playsInline = true;
+          mediaEl.preload = "auto";
+          mediaEl.pause();
+          mediaEl.currentTime = 0;
+
+          const texture = new THREE.VideoTexture(mediaEl);
+          texture.minFilter = THREE.LinearFilter;
+          texture.magFilter = THREE.LinearFilter;
+
+          el.addEventListener("loaded", () => {
+            const mesh = el.getObject3D("mesh");
+            if (mesh && mesh.material) {
+              mesh.material.map = texture;
+              mesh.material.needsUpdate = true;
+            }
+          });
+        } else if (this.data.type === "audio") {
+          mediaEl = new Audio(this.data.src);
+          mediaEl.loop = (this.data.loop === true || this.data.loop === "true");
+          mediaEl.preload = "auto";
+          mediaEl.pause();
+          mediaEl.currentTime = 0;
+        }
+
+        // تنها و تنها با پیدا شدن تارگت پخش شروع می‌شود
+        targetEntity.addEventListener("targetFound", () => {
+          if (mediaEl) {
+            const p = mediaEl.play();
+            if (p !== undefined) {
+              p.catch(() => {
+                // در صورت نیاز به مجوز مرورگر، با لمس فعال می‌شود
+                const unlock = () => { mediaEl.play(); window.removeEventListener("touchstart", unlock); window.removeEventListener("click", unlock); };
+                window.addEventListener("touchstart", unlock, { once: true });
+                window.addEventListener("click", unlock, { once: true });
+              });
+            }
+          }
+        });
+
+        // به محض گم شدن تارگت، پخش و صدا بلافاصله متوقف می‌شوند
+        targetEntity.addEventListener("targetLost", () => {
+          if (mediaEl) {
+            mediaEl.pause();
+          }
+        });
+      }
+    });
+  </script>
+</head>
+<body>
+  <a-scene mindar-image="imageTargetSrc: ./targets.mind; autoStart: true;" vr-mode-ui="enabled: false" device-orientation-permission-ui="enabled: false">
+    <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
+    
+    <a-entity mindar-image-target="targetIndex: 0">
+      
+      <a-entity position="0 0 0.1" rotation="0 0 0" scale="0.5 0.5 0.5" auto-turn="speed: 40" touch-turn>
+        <a-gltf-model src="models/phoenix_bird.glb" animation-mixer="clip: *; loop: repeat; timeScale: 1"></a-gltf-model>
+      </a-entity>
+    </a-entity>
+
+    <a-entity mindar-image-target="targetIndex: 1">
+      
+      <a-plane position="0 0 0.1" width="0.80" height="0.45" material="shader: flat; side: double" media-controller="type: video; src: videos/video1.mp4; loop: true"></a-plane>
+    </a-entity>
+
+    <a-entity mindar-image-target="targetIndex: 2">
+      
+      <a-entity position="0 0 0" media-controller="type: audio; src: audios/audio1.mp3; loop: true"></a-entity>
+    </a-entity>
+  </a-scene>
+</body>
+</html>
